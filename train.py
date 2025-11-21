@@ -12,6 +12,7 @@ from sklearn.metrics import accuracy_score, hamming_loss, precision_score, recal
 import numpy as np
 from tqdm import tqdm
 import mlflow
+import time
 
 import data
 from model import TransformerMultiLabelClassifier
@@ -209,7 +210,7 @@ def print_epoch_metrics(epoch, num_epochs, fold, num_folds, train_metrics, val_m
     print("="*60)
 
 
-def run_kfold_training(config, comments, labels, tokenizer, device):
+def run_kfold_training(config, comments, labels, tokenizer, device,experiment_start_time):
     """
     Run K-fold cross-validation training with enhanced metrics and logging.
     
@@ -225,7 +226,19 @@ def run_kfold_training(config, comments, labels, tokenizer, device):
     #mlflow.set_experiment(config.mlflow_experiment_name)
     
     with mlflow.start_run(run_name=f"{config.author_name}_batch{config.batch}_lr{config.lr}_epochs{config.epochs}"):
-        
+        run_id = mlflow.active_run().info.run_id
+        print(f"MLflow Run ID: {run_id}\n")
+
+                # --- ADD GPU INFO LOGGING ---
+        if device.type == 'cuda':
+            gpu_name = torch.cuda.get_device_name(0)
+            mlflow.log_param('gpu_name', gpu_name)
+            print(f"Using GPU: {gpu_name}")
+            # Reset stats at the beginning of the run
+            torch.cuda.reset_peak_memory_stats(device) 
+        else:
+            mlflow.log_param('gpu_name', 'cpu')
+            print("Using CPU")
         # Log all configuration parameters
         mlflow.log_params({
             'batch_size': config.batch,
@@ -406,3 +419,38 @@ def run_kfold_training(config, comments, labels, tokenizer, device):
         
         # Print final experiment summary
         print_experiment_summary(best_fold_idx, best_fold_metrics, model_metrics)
+
+           # --- ADD FINAL TIME AND VRAM LOGGING ---
+        # (Place this right before the end of the `with mlflow.start_run(...)` block)
+        
+        # Log peak VRAM usage
+        # Log peak VRAM usage
+        if device.type == 'cuda':
+            max_vram_allocated_bytes = torch.cuda.max_memory_allocated(device)
+            max_vram_allocated_gb = max_vram_allocated_bytes / (1024**3) # Convert bytes to GB
+            mlflow.log_metric('peak_vram_usage_gb', round(max_vram_allocated_gb, 2))
+            print(f"Peak VRAM Usage: {max_vram_allocated_gb:.2f} GB")
+
+        # Log total experiment time
+        experiment_end_time = time.time()
+        total_duration_sec = experiment_end_time - experiment_start_time
+        
+        # --- NEW H:M:S FORMATTING ---
+        # Calculate H:M:S
+        m, s = divmod(total_duration_sec, 60)
+        h, m = divmod(m, 60)
+        duration_hms = f'{int(h)}h {int(m)}m {int(s)}s'
+
+        # Log duration H:M:S as a string param (good for display)
+        mlflow.log_param('total_experiment_duration_hms', duration_hms) 
+        
+        # Also log total minutes as a metric (good for sorting/graphing)
+        total_duration_min = total_duration_sec / 60
+        mlflow.log_metric('total_experiment_duration_min', round(total_duration_min, 2))
+        
+        print(f"\nTotal Experiment Duration: {duration_hms} ({total_duration_min:.2f} minutes)")
+        # --- END OF NEW H:M:S FORMATTING ---
+
+        # Print final summary
+        print(f"\n{'='*60}")
+        print("TRAINING COMPLETED SUCCESSFULLY!")

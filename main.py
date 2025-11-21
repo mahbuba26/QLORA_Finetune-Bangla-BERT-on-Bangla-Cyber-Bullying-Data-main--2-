@@ -80,7 +80,7 @@ def main():
     print("-" * 60)
     
     try:
-        train.run_kfold_training(config, comments, labels, tokenizer, device)
+        train.run_kfold_training(config, comments, labels, tokenizer, device,start_time)
         print("\n✅ Training completed successfully!")
         
     except KeyboardInterrupt:
