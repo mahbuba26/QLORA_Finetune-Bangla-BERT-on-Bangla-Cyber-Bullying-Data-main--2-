@@ -23,6 +23,25 @@ import data
 from model import TransformerMultiLabelClassifier
 from utils import get_model_metrics, print_fold_summary, print_experiment_summary
 
+def cache_dataset(comments, labels, tokenizer, max_length, cache_file):
+    """Cache dataset to avoid reprocessing"""
+    if os.path.exists(cache_file):
+        print(f"Loading cached dataset from {cache_file}")
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+    
+    print(f"Creating and caching dataset to {cache_file}")
+    dataset = HateSpeechDataset(comments, labels, tokenizer, max_length)
+    
+    # Ensure cache directory exists
+    cache_dir = os.path.dirname(cache_file)
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+    
+    with open(cache_file, 'wb') as f:
+        pickle.dump(dataset, f)
+    return dataset
+
 
 def calculate_metrics(y_true, y_pred):
     """
@@ -226,9 +245,24 @@ def run_kfold_training(config, comments, labels, tokenizer, device,experiment_st
         tokenizer: Tokenizer for text encoding
         device: Device to run training on
     """
-    # Set up MLflow experiment
+    # Create directories for outputs
+    output_dir = './outputs'
+    cache_dir = './cache'
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Set MLflow tracking
+    mlflow_dir = os.path.abspath('./mlruns')
+    mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+    print(f"\n{'='*60}")
+    print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
+    print(f"MLflow logs directory: {mlflow_dir}")
+    print(f"CSV outputs directory: {output_dir}")
+    print(f"Cache directory: {cache_dir}")
+    print(f"{'='*60}\n")
+    
+    # mlflow.set_experiment(config.mlflow_experiment_name)
     mlflow.set_experiment(config.mlflow_experiment_name)
-    #mlflow.set_experiment(config.mlflow_experiment_name)
     
     with mlflow.start_run(run_name=f"{config.author_name}_batch{config.batch}_lr{config.lr}_epochs{config.epochs}"):
         run_id = mlflow.active_run().info.run_id
