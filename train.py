@@ -4,6 +4,8 @@ Includes both weighted and macro metrics, training set evaluation, and optimized
 """
 
 import torch
+import os
+
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
