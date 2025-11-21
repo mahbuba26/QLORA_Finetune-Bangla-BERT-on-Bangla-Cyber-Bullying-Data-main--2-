@@ -78,16 +78,22 @@ def parse_arguments():
     
     parser.add_argument('--early_stopping_patience', type=int, default=5,
                        help='Number of epochs without improvement before early stopping.')
+
+    parser.add_argument('--use_quantization', action='store_true',
+                        help='Enable 4-bit or 8-bit quantization (QLoRA if used with --use_lora).')
+    parser.add_argument('--quant_type', type=str, default='4bit', choices=['4bit', '8bit'],
+                        help='Type of quantization to use.')
     
-    parser.add_argument('--use_lora', type=str, default='True',
-                    help='Whether to use LoRA for fine-tuning.')
-    parser.add_argument('--lora_r', type=int, default=8,
-                        help='LoRA rank (lower = fewer params, try 4-16).')
-    parser.add_argument('--lora_alpha', type=int, default=16,
-                        help='LoRA alpha (scaling factor, usually 2x lora_r).')
-    parser.add_argument('--lora_dropout', type=float, default=0.05,
-                        help='Dropout rate within LoRA layers.')
-    
+    parser.add_argument('--use_lora', type=str, default='True',help='Whether to use LoRA for fine-tuning.')
+    parser.add_argument('--lora_r', type=int, default=8,help='LoRA rank (lower = fewer params, try 4-16).')
+    parser.add_argument('--lora_alpha', type=int, default=16,help='LoRA alpha (scaling factor, usually 2x lora_r).')
+    parser.add_argument('--lora_dropout', type=float, default=0.05,help='Dropout rate within LoRA layers.')
+    parser.add_argument('--use_pruning', action='store_true',
+                        help='Enable magnitude pruning during training.')
+    parser.add_argument('--pruning_amount', type=float, default=0.3,
+                        help='Fraction of weights to prune (e.g., 0.3 = 30%).')
+    # --- END OF ADDITION ---
+
     # Parse arguments
     args = parser.parse_args()
     args.use_lora = args.use_lora.lower() == 'true'
@@ -138,10 +144,20 @@ def print_config(config):
     print(f"  Max Sequence Length: {config.max_length}")
     print(f"  Freeze Base: {config.freeze_base}")
     print(f"  Dropout: {config.dropout}")
+
+    print(f"  Use Quantization: {config.use_quantization}")
+    if config.use_quantization:
+        print(f"  Quantization Type: {config.quant_type}")
+
     print(f"  Use LoRA: {config.use_lora}")
     print(f"  LoRA Rank: {config.lora_r}")
     print(f"  LoRA Alpha: {config.lora_alpha}")
     print(f"  LoRA Dropout: {config.lora_dropout}")
+
+    if config.use_lora:
+        print(f"  LoRA Rank: {config.lora_r}")
+        print(f"  LoRA Alpha: {config.lora_alpha}")
+        print(f"  LoRA Dropout: {config.lora_dropout}")
     
     print("\nOptimizer Parameters:")
     print(f"  Weight Decay: {config.weight_decay}")

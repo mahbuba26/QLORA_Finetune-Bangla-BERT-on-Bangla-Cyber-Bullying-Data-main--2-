@@ -6,7 +6,7 @@ Supports any transformer model (BERT, RoBERTa, XLM-RoBERTa, etc.) through AutoMo
 import torch.nn as nn
 from transformers import AutoModel, AutoConfig
 from peft import get_peft_model, LoraConfig, TaskType
-
+from transformers import AutoModel, AutoConfig, BitsAndBytesConfig
 
 
 class TransformerMultiLabelClassifier(nn.Module):
@@ -15,7 +15,7 @@ class TransformerMultiLabelClassifier(nn.Module):
     Works with any transformer model from HuggingFace (BERT, RoBERTa, XLM-RoBERTa, etc.)
     """
     
-    def __init__(self, model_name, num_labels, dropout=0.1,use_lora=True, lora_r=8, lora_alpha=16, lora_dropout=0.05):
+    def __init__(self, model_name, num_labels, dropout=0.1,use_lora=True, lora_r=8, lora_alpha=16, lora_dropout=0.05,use_quantization=False, quant_type='4bit'):
         """
         Initialize the multi-label classifier.
         
@@ -29,9 +29,32 @@ class TransformerMultiLabelClassifier(nn.Module):
             lora_dropout (float): LoRA dropout rate
         """
         super(TransformerMultiLabelClassifier, self).__init__()
+            # --- ADD QUANTIZATION CONFIG ---
+        bnb_config = None
+        device_map = None # Let train.py handle .to(device) unless quantizing
+        
+        if use_quantization and torch.cuda.is_available():
+            print(f"Applying {quant_type} quantization...")
+            if quant_type == '4bit':
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16
+                )
+            elif quant_type == '8bit':
+                bnb_config = BitsAndBytesConfig(
+                    load_in_8bit=True
+                )
+            
+            # device_map="auto" is required for bitsandbytes quantization
+            # It automatically places the quantized model on the GPU
+            device_map = "auto"
+        # --- END OF ADDITION
         
         # Auto-detect and load any transformer model
-        self.encoder = AutoModel.from_pretrained(model_name)
+        self.encoder = AutoModel.from_pretrained(model_name, quantization_config=bnb_config, # <--- PASS BITSANDBYTES CONFIG
+            device_map=device_map)            # <--- PASS DEVICE MAP)
         
         # Get the hidden size from the model's config
         config = AutoConfig.from_pretrained(model_name)

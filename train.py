@@ -10,6 +10,9 @@ from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import accuracy_score, hamming_loss, precision_score, recall_score, f1_score
 import numpy as np
+import gzip  # <--- ADD THIS
+import shutil
+import torch.nn.utils.prune as prune
 from tqdm import tqdm
 import mlflow
 import time
@@ -249,9 +252,11 @@ def run_kfold_training(config, comments, labels, tokenizer, device,experiment_st
             'freeze_base': config.freeze_base,
             'dropout': config.dropout,
             'use_lora': config.use_lora,              
-            'lora_r': config.lora_r,                  
-            'lora_alpha': config.lora_alpha,          
-            'lora_dropout': config.lora_dropout,      
+            'lora_r': config.lora_r if config.use_lora else None,
+            'lora_alpha': config.lora_alpha if config.use_lora else None,
+            'lora_dropout': config.lora_dropout if config.use_lora else None,
+            'use_quantization': config.use_quantization,
+            'quant_type': config.quant_type if config.use_quantization else None,     
             'weight_decay': config.weight_decay,
             'warmup_ratio': config.warmup_ratio,
             'gradient_clip_norm': config.gradient_clip_norm,
@@ -302,14 +307,33 @@ def run_kfold_training(config, comments, labels, tokenizer, device,experiment_st
                 use_lora=config.use_lora,
                 lora_r=config.lora_r,
                 lora_alpha=config.lora_alpha,
-                lora_dropout=config.lora_dropout)
+                lora_dropout=config.lora_dropout,
+                use_quantization=config.use_quantization,
+                quant_type=config.quant_type)
             
             # Freeze base layers if specified
             if config.freeze_base:
                 model.freeze_base_layers()
             
             model.to(device)
+            if config.use_pruning and (config.use_lora or config.use_quantization):
+                raise ValueError("Pruning cannot be used with LoRA or Quantization.")
             
+            parameters_to_prune = []
+            if config.use_pruning:
+                print(f"\nApplying {config.pruning_amount * 100}% global unstructured pruning...")
+                # Prune the linear layers in the encoder and the classifier
+                for module in model.modules():
+                    if isinstance(module, torch.nn.Linear):
+                        parameters_to_prune.append((module, 'weight'))
+
+                if len(parameters_to_prune) > 0:
+                    prune.global_unstructured(
+                        parameters_to_prune,
+                        pruning_method=prune.L1Unstructured,
+                        amount=config.pruning_amount,
+                    )
+                    print("Pruning masks applied.")
             # Get model metrics (only once per experiment, not per fold)
             if fold == 0:
                 model_metrics = get_model_metrics(model)
@@ -370,6 +394,47 @@ def run_kfold_training(config, comments, labels, tokenizer, device,experiment_st
             # Store best metrics for this fold
             best_metrics['best_epoch'] = best_epoch
             fold_results.append(best_metrics)
+
+            if config.use_pruning and len(parameters_to_prune) > 0:
+                print("Making pruning permanent by removing masks...")
+                for module, name in parameters_to_prune:
+                    prune.remove(module, name)
+
+            
+
+            # --- START: ADDITION FOR FINAL FILE SIZE ---
+            print("\nCalculating final raw and compressed model file size...")
+            
+            # 1. Define file path
+            model_filename = os.path.join(output_dir, f'model_fold{fold+1}.pth')
+            
+            # 2. Save the model's state_dict
+            torch.save(model.state_dict(), model_filename)
+            
+            # 3. Get raw file size
+            raw_file_size_mb = os.path.getsize(model_filename) / (1024 * 1024)
+            raw_size_metric_name = f'fold_{fold+1}_model_raw_size_mb'
+            print(f"  Final Model RAW FILE SIZE (on disk): {raw_file_size_mb:.2f} MB")
+            mlflow.log_metric(raw_size_metric_name, raw_file_size_mb)
+
+            # 4. Gzip the file
+            compressed_filename = model_filename + '.gz'
+            try:
+                with open(model_filename, 'rb') as f_in:
+                    with gzip.open(compressed_filename, 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                        
+                # 5. Get compressed file size
+                compressed_file_size_mb = os.path.getsize(compressed_filename) / (1024 * 1024)
+                compressed_size_metric_name = f'fold_{fold+1}_model_compressed_size_mb'
+                print(f"  Final Model COMPRESSED (GZIP) FILE SIZE: {compressed_file_size_mb:.2f} MB")
+                mlflow.log_metric(compressed_size_metric_name, compressed_file_size_mb)
+            except Exception as e:
+                print(f"  Failed to create compressed model file: {e}")
+            print("="*60)
+            # --- END: ADDITION FOR FINAL FILE SIZE ---
+
+            
             
             # Log best metrics for this fold to MLflow (not epoch-level metrics)
             for metric_name, metric_value in best_metrics.items():
